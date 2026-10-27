@@ -1,0 +1,108 @@
+name: 'Build Snap Package'
+description: 'Builds reduct-bridge snap variants and exposes the built snap file.'
+inputs:
+  variant:
+    description: 'Build variant track (ros1, ros2, or iot).'
+    required: true
+  upload_artifact:
+    description: 'Upload built snap as workflow artifact.'
+    required: false
+    default: 'true'
+outputs:
+  snap_file:
+    description: 'Built snap file path.'
+    value: ${{ steps.rename.outputs.snap_file }}
+  snap_name:
+    description: 'Snap package name.'
+    value: ${{ env.SNAP_NAME }}
+runs:
+  using: 'composite'
+  steps:
+    - name: Resolve snap package inputs
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        case "${{ inputs.variant }}" in
+          ros1)
+            echo "SNAP_TITLE=ReductBridge for ROS1" >> "$GITHUB_ENV"
+            echo "SNAP_NAME=reduct-bridge-ros1" >> "$GITHUB_ENV"
+            echo "BINARY_ARTIFACT=bridge-ros1-x86_64-unknown-linux-gnu" >> "$GITHUB_ENV"
+            echo "SNAP_VARIANT=ros1" >> "$GITHUB_ENV"
+            ;;
+          ros2)
+            echo "SNAP_TITLE=ReductBridge for ROS2" >> "$GITHUB_ENV"
+            echo "SNAP_NAME=reduct-bridge-ros2" >> "$GITHUB_ENV"
+            echo "BINARY_ARTIFACT=bridge-ros2-jazzy-x86_64-unknown-linux-gnu" >> "$GITHUB_ENV"
+            echo "SNAP_VARIANT=ros2" >> "$GITHUB_ENV"
+            echo "SNAP_ROS_DISTRO=jazzy" >> "$GITHUB_ENV"
+            ;;
+          iot)
+            echo "SNAP_TITLE=ReductBridge for IIoT" >> "$GITHUB_ENV"
+            echo "SNAP_NAME=reduct-bridge-iot" >> "$GITHUB_ENV"
+            echo "BINARY_ARTIFACT=bridge-iot-x86_64-unknown-linux-gnu" >> "$GITHUB_ENV"
+            echo "SNAP_VARIANT=iot" >> "$GITHUB_ENV"
+            ;;
+          *)
+            echo "Unsupported variant: ${{ inputs.variant }}"
+            exit 1
+            ;;
+        esac
+
+    - name: Download binary artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ env.BINARY_ARTIFACT }}
+        path: .snap-build/bin
+
+    - name: Prepare snap payload files
+      shell: bash
+      run: |
+        set -euo pipefail
+        chmod +x .snap-build/bin/reduct-bridge
+        chmod +x snap/local/run-bridge.sh
+        chmod +x snap/local/start-daemon.sh
+        chmod +x snap/hooks/configure
+        chmod +x snap/hooks/install
+
+    - name: Generate snapcraft manifest
+      env:
+        SNAP_NAME: ${{ env.SNAP_NAME }}
+        SNAP_TITLE: ${{ env.SNAP_TITLE }}
+        SNAP_VARIANT: ${{ env.SNAP_VARIANT }}
+        SNAP_ROS_DISTRO: ${{ env.SNAP_ROS_DISTRO }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        python .github/actions/snap-release/generate_snapcraft.py
+
+    - name: Print generated snapcraft manifest
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "--- snap/snapcraft.yaml ---"
+        sed -n '1,240p' snap/snapcraft.yaml
+
+    - name: Build snap
+      id: build-snap
+      uses: snapcore/action-build@v1
+
+    - name: Rename artifact with variant
+      id: rename
+      env:
+        SNAP_NAME: ${{ env.SNAP_NAME }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        SNAP_FILE="${{ steps.build-snap.outputs.snap }}"
+        RENAMED_FILE="${SNAP_NAME}.snap"
+        mv "$SNAP_FILE" "$RENAMED_FILE"
+        echo "SNAP_FILE=$RENAMED_FILE" >> "$GITHUB_ENV"
+        echo "snap_file=$RENAMED_FILE" >> "$GITHUB_OUTPUT"
+
+    - name: Upload artifact
+      if: inputs.upload_artifact == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.SNAP_NAME }}.snap
+        path: ${{ env.SNAP_FILE }}

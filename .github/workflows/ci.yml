@@ -1,0 +1,562 @@
+name: Build, Test and Release
+on:
+  push:
+    branches: [main, stable]
+    tags:
+      - "v*"
+    paths-ignore:
+      - docs/**
+      - dev/**
+      - README.md
+      - CHANGELOG.md
+
+  pull_request:
+    paths-ignore:
+      - docs/**
+      - dev/**
+      - README.md
+      - CHANGELOG.md
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY_IMAGE: reduct/bridge
+  AWS_LC_SYS_USE_PREBUILT: 0
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  rust_fmt:
+    runs-on: ubuntu-latest
+    name: Rust Linter
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Check code
+        run: cargo fmt --all -- --check
+
+  snap_manifest:
+    runs-on: ubuntu-latest
+    name: Snap manifest tests
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Check generated snapcraft manifests
+        run: python3 -m unittest discover -s .github/actions/snap-release -p 'test_*.py'
+
+  build_binaries:
+    name: Build Binaries
+    runs-on: ${{ matrix.os }}
+    needs:
+      - rust_fmt
+    strategy:
+      matrix:
+        include:
+          - artifact_prefix: "bridge-ros1"
+            target: "x86_64-unknown-linux-gnu"
+            os: ubuntu-22.04
+            compiler: "gcc"
+            cargo_args: "--no-default-features --features ros1"
+            ros_distro: ""
+            ros_setup_script: ""
+          - artifact_prefix: "bridge-ros2-jazzy"
+            target: "x86_64-unknown-linux-gnu"
+            os: ubuntu-24.04
+            compiler: "gcc"
+            cargo_args: "--no-default-features --features ros2"
+            ros_distro: "jazzy"
+            ros_setup_script: "/opt/ros/jazzy/setup.bash"
+          - artifact_prefix: "bridge-ros2-humble"
+            target: "x86_64-unknown-linux-gnu"
+            os: ubuntu-22.04
+            compiler: "gcc"
+            cargo_args: "--no-default-features --features ros2"
+            ros_distro: "humble"
+            ros_setup_script: "/opt/ros/humble/setup.bash"
+          - artifact_prefix: "bridge-iot"
+            target: "x86_64-unknown-linux-gnu"
+            os: ubuntu-24.04
+            compiler: "gcc"
+            cargo_args: "--no-default-features --features iot"
+            ros_distro: ""
+            ros_setup_script: ""
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prevent apt upgrade from triggering snap store
+        if: ${{ matrix.ros_setup_script != '' }}
+        run: sudo apt-mark hold firefox snapd
+      - name: Install ROS2
+        if: ${{ matrix.ros_setup_script != '' }}
+        uses: ros-tooling/setup-ros@649ef6bcd696da05bc27ceb3fab69d810c0daeab
+        with:
+          required-ros-distributions: ${{ matrix.ros_distro }}
+      - name: Install ROS2 interface packages
+        if: ${{ matrix.ros_setup_script != '' }}
+        run: sudo apt-get update && sudo apt-get install -y ros-${{ matrix.ros_distro }}-example-interfaces ros-${{ matrix.ros_distro }}-test-msgs
+      - uses: ./.github/actions/build-binaries
+        with:
+          action_github_token: ${{ secrets.ACTION_GITHUB_TOKEN }}
+          artifact-prefix: ${{ matrix.artifact_prefix }}
+          target: ${{ matrix.target }}
+          os: ${{ matrix.os }}
+          compiler: ${{ matrix.compiler }}
+          access-key-id: ${{ secrets.S3_CACHE_ACCESS_KEY }}
+          secret-access-key: ${{ secrets.S3_CACHE_SECRET_KEY }}
+          cargo-args: ${{ matrix.cargo_args }}
+          ros-setup-script: ${{ matrix.ros_setup_script }}
+
+  unit_tests:
+    name: Run Unit Tests
+    needs:
+      - rust_fmt
+      - build_binaries
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact_prefix: "bridge-ros1"
+            os: ubuntu-22.04
+            ros_distro: ""
+            ros_setup_script: ""
+          - artifact_prefix: "bridge-ros2-jazzy"
+            os: ubuntu-24.04
+            ros_distro: "jazzy"
+            ros_setup_script: "/opt/ros/jazzy/setup.bash"
+          - artifact_prefix: "bridge-ros2-humble"
+            os: ubuntu-22.04
+            ros_distro: "humble"
+            ros_setup_script: "/opt/ros/humble/setup.bash"
+          - artifact_prefix: "bridge-iot"
+            os: ubuntu-24.04
+            ros_distro: ""
+            ros_setup_script: ""
+    timeout-minutes: 20
+    env:
+      RUST_BACKTRACE: 1
+      RUST_LOG: debug
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prevent apt upgrade from triggering snap store
+        if: ${{ matrix.ros_setup_script != '' }}
+        run: sudo apt-mark hold firefox snapd
+      - name: Install ROS2
+        if: ${{ matrix.ros_setup_script != '' }}
+        uses: ros-tooling/setup-ros@649ef6bcd696da05bc27ceb3fab69d810c0daeab
+        with:
+          required-ros-distributions: ${{ matrix.ros_distro }}
+      - name: Install ROS2 interface packages
+        if: ${{ matrix.ros_setup_script != '' }}
+        run: sudo apt-get update && sudo apt-get install -y ros-${{ matrix.ros_distro }}-example-interfaces ros-${{ matrix.ros_distro }}-test-msgs
+      - name: Download test artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ matrix.artifact_prefix }}-tests-x86_64-unknown-linux-gnu
+          path: ./tmp/tests
+      - uses: ./.github/actions/run-reductstore
+        with:
+          container_name: reduct-store-unit-${{ matrix.artifact_prefix }}
+      - uses: ./.github/actions/unit-tests
+        with:
+          os: ${{ matrix.os }}
+          target: x86_64-unknown-linux-gnu
+          ros-setup-script: ${{ matrix.ros_setup_script }}
+
+  ros1_input_integration:
+    name: ROS1 Input Integration
+    needs:
+      - rust_fmt
+      - build_binaries
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Download reduct-bridge Linux artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bridge-ros1-x86_64-unknown-linux-gnu
+          path: ./tmp/reduct-bridge
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - uses: ./.github/actions/ros1-input-smoke
+        with:
+          bridge_binary: ./tmp/reduct-bridge/reduct-bridge
+
+  shell_input_integration:
+    name: Shell Input Integration
+    needs:
+      - rust_fmt
+      - build_binaries
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Download reduct-bridge Linux artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bridge-ros1-x86_64-unknown-linux-gnu
+          path: ./tmp/reduct-bridge
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - uses: ./.github/actions/shell-input-smoke
+        with:
+          bridge_binary: ./tmp/reduct-bridge/reduct-bridge
+
+  mqtt_input_integration:
+    name: MQTT Input Integration
+    needs:
+      - rust_fmt
+      - build_binaries
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Download reduct-bridge Linux artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bridge-iot-x86_64-unknown-linux-gnu
+          path: ./tmp/reduct-bridge
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Install Mosquitto
+        run: sudo apt-get update && sudo apt-get install -y mosquitto mosquitto-clients
+
+      - uses: ./.github/actions/mqtt-input-smoke
+        with:
+          bridge_binary: ./tmp/reduct-bridge/reduct-bridge
+
+  ros2_input_integration:
+    name: ROS2 Input Integration
+    needs:
+      - rust_fmt
+      - build_binaries
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact_prefix: "bridge-ros2-jazzy"
+            os: ubuntu-24.04
+            ros_distro: "jazzy"
+            ros_setup_script: "/opt/ros/jazzy/setup.bash"
+          - artifact_prefix: "bridge-ros2-humble"
+            os: ubuntu-22.04
+            ros_distro: "humble"
+            ros_setup_script: "/opt/ros/humble/setup.bash"
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prevent apt upgrade from triggering snap store
+        run: sudo apt-mark hold firefox snapd
+      - name: Install ROS2
+        uses: ros-tooling/setup-ros@649ef6bcd696da05bc27ceb3fab69d810c0daeab
+        with:
+          required-ros-distributions: ${{ matrix.ros_distro }}
+      - name: Install ROS2 interface packages
+        run: sudo apt-get update && sudo apt-get install -y ros-${{ matrix.ros_distro }}-example-interfaces ros-${{ matrix.ros_distro }}-test-msgs
+      - name: Download reduct-bridge Linux artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ matrix.artifact_prefix }}-x86_64-unknown-linux-gnu
+          path: ./tmp/reduct-bridge
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+      - uses: ./.github/actions/ros2-input-smoke
+        with:
+          bridge_binary: ./tmp/reduct-bridge/reduct-bridge
+          ros-setup-script: ${{ matrix.ros_setup_script }}
+
+  coverage:
+    name: Generate Code Coverage
+    needs:
+      - rust_fmt
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_LOG: debug
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prevent apt upgrade from triggering snap store
+        run: sudo apt-mark hold firefox snapd
+      - name: Install ROS2
+        uses: ros-tooling/setup-ros@649ef6bcd696da05bc27ceb3fab69d810c0daeab
+        with:
+          required-ros-distributions: jazzy
+      - name: Install ROS2 interface packages
+        run: sudo apt-get update && sudo apt-get install -y ros-jazzy-example-interfaces ros-jazzy-test-msgs
+      - uses: ./.github/actions/run-reductstore
+        with:
+          container_name: reduct-store-coverage
+
+      - uses: ./.github/actions/coverage
+        with:
+          os: ubuntu-24.04
+          target: x86_64-unknown-linux-gnu
+          action_github_token: ${{ secrets.ACTION_GITHUB_TOKEN }}
+          cargo-args: --no-default-features --features ci,all-inputs
+          ros-setup-script: /opt/ros/jazzy/setup.bash
+          access-key-id: ${{ secrets.S3_CACHE_ACCESS_KEY }}
+          secret-access-key: ${{ secrets.S3_CACHE_SECRET_KEY }}
+
+      - name: Upload coverage to Codecov
+        continue-on-error: true
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238
+        with:
+          files: lcov.info
+          fail_ci_if_error: true
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  build_test_docker_image:
+    name: Build Docker image
+    runs-on: ubuntu-22.04
+    needs:
+      - rust_fmt
+      - build_binaries
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image_artifact_name: image-ros1-linux-amd64
+            bridge_artifact_name: bridge-ros1-x86_64-unknown-linux-gnu
+            image_tag: reduct/bridge:ros1-test
+            base_image: ubuntu:24.04@sha256:023f8a753c22258c9fe2d0005a7d28258038da7d620e9f93e9ad78aa266f9f11
+            ros_distro: ""
+          - image_artifact_name: image-ros2-jazzy-linux-amd64
+            bridge_artifact_name: bridge-ros2-jazzy-x86_64-unknown-linux-gnu
+            image_tag: reduct/bridge:ros2-jazzy-test
+            base_image: ubuntu:24.04@sha256:023f8a753c22258c9fe2d0005a7d28258038da7d620e9f93e9ad78aa266f9f11
+            ros_distro: jazzy
+          - image_artifact_name: image-ros2-humble-linux-amd64
+            bridge_artifact_name: bridge-ros2-humble-x86_64-unknown-linux-gnu
+            image_tag: reduct/bridge:ros2-humble-test
+            base_image: ubuntu:22.04@sha256:ce941a2a18bbb922e434d6d6d2b31e571a5c3826eaf6ada0a41dcc905bd2d906
+            ros_distro: humble
+          - image_artifact_name: image-iot-linux-amd64
+            bridge_artifact_name: bridge-iot-x86_64-unknown-linux-gnu
+            image_tag: reduct/bridge:iot-test
+            base_image: ubuntu:24.04@sha256:023f8a753c22258c9fe2d0005a7d28258038da7d620e9f93e9ad78aa266f9f11
+            ros_distro: ""
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: ./.github/actions/build-docker
+        with:
+          platform: linux/amd64
+          target: x86_64-unknown-linux-gnu
+          bridge_artifact_name: ${{ matrix.bridge_artifact_name }}
+          image_artifact_name: ${{ matrix.image_artifact_name }}
+          image_tag: ${{ matrix.image_tag }}
+          base_image: ${{ matrix.base_image }}
+          ros_distro: ${{ matrix.ros_distro }}
+
+  all_tests_passed:
+    name: All Tests Passed
+    runs-on: ubuntu-latest
+    needs:
+      - unit_tests
+      - ros1_input_integration
+      - ros2_input_integration
+      - shell_input_integration
+      - mqtt_input_integration
+    steps:
+      - name: Confirm all test jobs passed
+        run: echo "All unit and integration tests passed"
+
+  check_tag:
+    runs-on: ubuntu-latest
+    name: Check tag
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Check tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name=="reduct-bridge") | .version')
+          if [ -z "$version" ] || [ "$version" = "null" ]; then
+            echo "Could not resolve package version for reduct-bridge"
+            exit 1
+          fi
+          echo "Version in Cargo.toml: $version"
+          if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match version v${version}"
+            exit 1
+          fi
+
+  make_release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    needs:
+      - check_tag # Only publish on tags
+      - all_tests_passed
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    name: Make release
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
+        id: create_release
+        with:
+          draft: true
+          prerelease: false
+          name: Release ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          body: Copy changes from CHANGELOG.md
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+  upload_release:
+    runs-on: ubuntu-latest
+    needs:
+      - make_release
+      - build_binaries
+    permissions:
+      contents: write
+    name: Upload artifacts
+    if: startsWith(github.ref, 'refs/tags/')
+    strategy:
+      matrix:
+        include:
+          - artifact_name: bridge-ros1-x86_64-unknown-linux-gnu
+            asset_name: bridge-ros1.x86_64-unknown-linux-gnu.tar.gz
+          - artifact_name: bridge-ros2-jazzy-x86_64-unknown-linux-gnu
+            asset_name: bridge-ros2-jazzy.x86_64-unknown-linux-gnu.tar.gz
+          - artifact_name: bridge-ros2-humble-x86_64-unknown-linux-gnu
+            asset_name: bridge-ros2-humble.x86_64-unknown-linux-gnu.tar.gz
+          - artifact_name: bridge-iot-x86_64-unknown-linux-gnu
+            asset_name: bridge-iot.x86_64-unknown-linux-gnu.tar.gz
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Download ${{ matrix.artifact_name }} artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: /tmp/
+      - name: Archive binary
+        run: |
+          cd /tmp
+          tar -czvf ${{ matrix.asset_name }} reduct-bridge
+
+      - name: Upload artifact
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          upload_url: ${{ needs.make_release.outputs.upload_url }}
+          asset_path: /tmp/${{ matrix.asset_name }}
+          asset_name: ${{ matrix.asset_name }}
+          asset_content_type: application/gzip
+
+  push_image_dockerhub:
+    runs-on: ubuntu-latest
+    name: Build image and push it to DockerHub Registry
+    needs:
+      - check_tag
+      - build_binaries
+      - all_tests_passed
+    if: github.event_name != 'pull_request'
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            cargo_target: x86_64-unknown-linux-gnu
+            bridge_artifact_name: bridge-ros1-x86_64-unknown-linux-gnu
+            image_name: reduct/bridge
+            image_suffix: ros1
+            base_image: ubuntu:24.04@sha256:023f8a753c22258c9fe2d0005a7d28258038da7d620e9f93e9ad78aa266f9f11
+            ros_distro: ""
+          - platform: linux/amd64
+            cargo_target: x86_64-unknown-linux-gnu
+            bridge_artifact_name: bridge-ros2-jazzy-x86_64-unknown-linux-gnu
+            image_name: reduct/bridge
+            image_suffix: ros2-jazzy
+            base_image: ubuntu:24.04@sha256:023f8a753c22258c9fe2d0005a7d28258038da7d620e9f93e9ad78aa266f9f11
+            ros_distro: jazzy
+          - platform: linux/amd64
+            cargo_target: x86_64-unknown-linux-gnu
+            bridge_artifact_name: bridge-ros2-humble-x86_64-unknown-linux-gnu
+            image_name: reduct/bridge
+            image_suffix: ros2-humble
+            base_image: ubuntu:22.04@sha256:ce941a2a18bbb922e434d6d6d2b31e571a5c3826eaf6ada0a41dcc905bd2d906
+            ros_distro: humble
+          - platform: linux/amd64
+            cargo_target: x86_64-unknown-linux-gnu
+            bridge_artifact_name: bridge-iot-x86_64-unknown-linux-gnu
+            image_name: reduct/bridge
+            image_suffix: iot
+            base_image: ubuntu:24.04@sha256:023f8a753c22258c9fe2d0005a7d28258038da7d620e9f93e9ad78aa266f9f11
+            ros_distro: ""
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@465a07811f14bebb1938fbed4728c6a1ff8901fc
+        with:
+          username: ${{ secrets.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@98669ae865ea3cffbcbaa878cf57c20bbf1c6c38
+        with:
+          images: ${{ matrix.image_name }}
+          tags: |
+            type=semver,pattern=v{{version}},suffix=-${{ matrix.image_suffix }}
+            type=raw,value=main-${{ matrix.image_suffix }},enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=latest-${{ matrix.image_suffix }},enable=${{ github.ref == 'refs/heads/stable' }}
+
+      - name: Build and push Docker image to GitHub repo
+        id: build
+        uses: ./.github/actions/build-docker
+        with:
+          platform: ${{ matrix.platform }}
+          target: ${{ matrix.cargo_target }}
+          bridge_artifact_name: ${{ matrix.bridge_artifact_name }}
+          image_tag: ${{ steps.meta.outputs.tags }}
+          docker_labels: ${{ steps.meta.outputs.labels }}
+          upload_artifact: "false"
+          build_outputs: type=image,push=true
+          base_image: ${{ matrix.base_image }}
+          ros_distro: ${{ matrix.ros_distro }}
+          sbom: 'true'
+          provenance: mode=max
+
+  snap_release:
+    name: Build and Publish Snap Package
+    runs-on: ubuntu-22.04
+    needs:
+      - all_tests_passed
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [ros1, ros2, iot]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: snap
+        uses: ./.github/actions/snap-release
+        with:
+          variant: ${{ matrix.variant }}
+      - name: Check Snapcraft credentials
+        id: snapcraft-creds
+        shell: bash
+        run: |
+          if [ -n "${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Publish snap package
+        if: ${{ steps.snapcraft-creds.outputs.available == 'true' }}
+        uses: snapcore/action-publish@214b86e5ca036ead1668c79afb81e550e6c54d40
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        with:
+          snap: ${{ steps.snap.outputs.snap_file }}
+          release: ${{ startsWith(github.ref, 'refs/tags/') && 'stable' || 'edge' }}

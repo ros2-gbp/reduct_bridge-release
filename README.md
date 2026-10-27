@@ -1,0 +1,168 @@
+# Reduct Bridge
+
+[![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/reductstore/reduct-bridge)](https://github.com/reductstore/reduct-bridge/releases/latest)
+[![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/reductstore/reduct-bridge/ci.yml?branch=main)](https://github.com/reductstore/reduct-bridge/actions)
+[![Docker Pulls](https://img.shields.io/docker/pulls/reduct/bridge)](https://hub.docker.com/r/reduct/bridge)
+[![GitHub all releases](https://img.shields.io/github/downloads/reductstore/reduct-bridge/total)](https://github.com/reductstore/reduct-bridge/releases/latest)
+[![codecov](https://codecov.io/gh/reductstore/reduct-bridge/branch/main/graph/badge.svg)](https://codecov.io/gh/reductstore/reduct-bridge)
+
+ReductBridge bridges live robotics and IIoT data with long-term storage in ReductStore.
+You can configure the bridge using a simple TOML file to define `inputs`, `pipelines`, and `remotes`.
+Inputs produce data, pipelines route and modify it, and remotes store it.
+
+## Inputs
+
+An `input` is a data source. It reads data from a system and produces records for the bridge.
+
+Supported input types include:
+
+- [HTTP](src/input/http/README.md) - poll HTTP/HTTPS endpoints on a fixed interval and store response payloads with optional JSON/header label mapping.
+- [Metrics](src/input/metrics/README.md) - collect host CPU, memory, and disk metrics as JSON records.
+- [MQTT](src/input/mqtt/README.md) - subscribe to MQTT v3/v5 topics over `mqtt://` or `mqtts://` and store raw payloads with optional payload/property label mapping.
+- [Shell](src/input/shell/README.md) - run shell commands on a fixed interval and store output lines as records.
+- [ROS1](src/input/ros1/README.md) - subscribe to ROS1 topics, store ROS messages, and extract labels from message fields.
+- [ROS2](src/input/ros2/README.md) - subscribe to ROS2 topics, store serialized CDR payloads, and extract labels from decoded message fields.
+
+
+## Remotes
+
+A `remote` is a data destination. It receives records from pipelines and writes them to external storage.
+
+Supported remote types include:
+
+- [ReductStore](src/remote/reduct/README.md) - write pipeline records and attachments to ReductStore with configurable batching.
+
+## Pipelines
+
+Pipelines connect one or more inputs to one remote.
+
+```toml
+# Pipeline definition path:
+# [pipelines.<pipeline_name>]
+[pipelines.telemetry]
+
+# Required: remote name from [[remotes.*]].
+remote = "local"
+
+# Required: one or more input names from [inputs.*.*].
+inputs = ["ros_local"]
+
+# Optional label rules (default = []):
+# 1) Static labels:
+#    { static = { source = "robot" }, to = "*" }
+#    - adds labels to matching target entries
+# 2) Copy labels from one entry to another:
+#    { from = "time", labels = ["timestamp"], to = "echo" }
+#    - remembers labels seen on matching source entries
+#    - applies them to matching target entries
+labels = [
+  { static = { source = "ros1" }, to = "*" }
+]
+```
+
+## Supported Formats
+
+ReductBridge supports different payload formats.
+Support means ReductBridge can parse payloads, extract labels, and, when schema information is available, store that schema in ReductStore.
+
+- JSON: find values by field path (example: [examples/mqtt_config.toml](examples/mqtt_config.toml)).
+- HTTP input: poll HTTP/HTTPS endpoints and extract optional header/JSON labels (example: [examples/http_config.toml](examples/http_config.toml)).
+- Protobuf: find values by field path (with schema) or by field ID/type (example: [examples/mqtt_protobuf_config.toml](examples/mqtt_protobuf_config.toml)).
+- ROS formats: decode ROS message payloads for labels and store the payloads as records (example: [examples/ros_config.toml](examples/ros_config.toml)).
+
+## Installation
+
+ReductBridge is published in build types named after Cargo feature bundles: `ros1`, `ros2`, and `iot`.
+Choose the build type for the input family you need.
+
+### Build Types
+
+Published packages and Docker images are split into these build types so each artifact only includes the dependencies needed for its input family.
+
+| Build type | Description | Included inputs | Published artifact names |
+| --- | --- | --- | --- |
+| `ros1` | ROS1 robotics bundle. | [ROS1](src/input/ros1/README.md), [Shell](src/input/shell/README.md), [Metrics](src/input/metrics/README.md) | Snap: `reduct-bridge-ros1`; Docker build type: `ros1`; binary: `bridge-ros1.x86_64-unknown-linux-gnu.tar.gz` |
+| `ros2` | ROS2 robotics bundle. | [ROS2](src/input/ros2/README.md), [Shell](src/input/shell/README.md), [Metrics](src/input/metrics/README.md) | Snap: `reduct-bridge-ros2`; Docker build types: `ros2-jazzy`, `ros2-humble`; binaries: `bridge-ros2-jazzy.x86_64-unknown-linux-gnu.tar.gz`, `bridge-ros2-humble.x86_64-unknown-linux-gnu.tar.gz` |
+| `iot` | HTTP/MQTT IIoT bundle. | [HTTP](src/input/http/README.md), [MQTT](src/input/mqtt/README.md), [Shell](src/input/shell/README.md), [Metrics](src/input/metrics/README.md) | Snap: `reduct-bridge-iot`; Docker build type: `iot`; binary: `bridge-iot.x86_64-unknown-linux-gnu.tar.gz` |
+
+Note: ROS2 binary and Docker artifacts are published per ROS distribution: `ros2-jazzy` and `ros2-humble`. The ROS2 snap is published as `reduct-bridge-ros2` and currently uses the Jazzy build.
+
+Input names in configuration use their input table names, for example `[inputs.ros.*]`, `[inputs.ros2.*]`, `[inputs.mqtt.*]`, `[inputs.shell.*]`, and `[inputs.metrics.*]`.
+
+### Docker
+
+Docker images are published as `reduct/bridge:<tag>`, where `<tag>` combines a release channel or version with the build type.
+For ROS2 Docker images, use the ROS distribution-specific build type: `ros2-jazzy` or `ros2-humble`.
+
+```bash
+docker pull reduct/bridge:main-<build-type>      # development builds from main
+docker pull reduct/bridge:latest-<build-type>    # stable builds
+docker pull reduct/bridge:v<version>-<build-type> # release builds
+```
+
+For example:
+
+```bash
+docker pull reduct/bridge:main-iot
+docker pull reduct/bridge:main-ros2-jazzy
+docker pull reduct/bridge:main-ros2-humble
+```
+
+Run the container with a mounted config file:
+
+```bash
+docker run --rm \
+  -v "$PWD/config.toml:/etc/reduct-bridge/config.toml:ro" \
+  reduct/bridge:main-iot /etc/reduct-bridge/config.toml
+```
+
+### Snap (Ubuntu 22.04+)
+
+```bash
+sudo snap install reduct-bridge-<build-type> --channel=edge   # or --channel=stable once released
+```
+
+To run the service with an explicit config file path, set the `config-path` snap option:
+
+   ```bash
+   sudo cp path/to/config.toml /var/snap/reduct-bridge/reduct-bridge.toml
+   sudo chmod 640 /var/snap/reduct-bridge/reduct-bridge.toml
+
+   sudo snap set reduct-bridge-<build-type> config-path=/var/snap/reduct-bridge/commont/reduct-bridge.toml
+   sudo snap get reduct-bridge-<build-type> config-path
+   sudo snap restart reduct-bridge-<build-type>.service
+   ```
+
+Release CI builds snap package variants and publishes them to the standard channels.
+
+### Cargo / source build
+
+```bash
+cargo install reduct-bridge
+```
+
+`cargo install reduct-bridge` builds the default feature set, which includes only the `shell` input.
+For HTTP-specific build and runtime guidance, see [HTTP input documentation](src/input/http/README.md).
+For MQTT-specific build and runtime guidance, see [MQTT input documentation](src/input/mqtt/README.md).
+The MQTT input is grouped under the `iot` Cargo feature alongside future IoT protocols.
+For metrics-specific build and runtime guidance, see [Metrics input documentation](src/input/metrics/README.md).
+For ROS2-specific build and runtime guidance, see [ROS2 input documentation](src/input/ros2/README.md).
+
+To build additional inputs explicitly from source:
+
+```bash
+cargo build --no-default-features --features ros1
+cargo build --no-default-features --features ros2
+cargo build --no-default-features --features iot
+cargo build --no-default-features --features all-inputs
+```
+
+## Usage
+
+```bash
+reduct-bridge /path/to/config.toml
+```
+
+## Documentation
+
+For detailed documentation, please refer to the [ReductBridge Documentation](https://reduct.store/docs/reduct-bridge).

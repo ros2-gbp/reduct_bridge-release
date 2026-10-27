@@ -1,0 +1,95 @@
+name: ROS Package
+
+on:
+  push:
+    branches: [main, stable]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-package:
+    name: ${{ matrix.ros_distro }} package (amd64)
+    strategy:
+      matrix:
+        include:
+          - artifact_prefix: "bridge-ros2-jazzy"
+            os: ubuntu-24.04
+            ros_distro: "jazzy"
+            ros_setup_script: "/opt/ros/jazzy/setup.bash"
+          - artifact_prefix: "bridge-ros2-humble"
+            os: ubuntu-22.04
+            ros_distro: "humble"
+            ros_setup_script: "/opt/ros/humble/setup.bash"
+
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install ROS 2 and package tools
+        uses: ros-tooling/setup-ros@649ef6bcd696da05bc27ceb3fab69d810c0daeab
+        with:
+          required-ros-distributions: ${{ matrix.ros_distro }}
+
+      - name: Install ROS interfaces and build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            python3-colcon-common-extensions \
+            python3-rosdep \
+            ros-${{ matrix.ros_distro }}-example-interfaces \
+            ros-${{ matrix.ros_distro }}-test-msgs
+
+      - name: Initialize rosdep
+        run: |
+          if [ ! -f /etc/ros/rosdep/sources.list.d/20-default.list ]; then
+            sudo rosdep init
+          fi
+          rosdep update
+
+      - name: Verify Rust toolchain
+        run: |
+          rustup toolchain install 1.96.0 --profile minimal
+          rustc --version
+          cargo --version
+          rustc --version | grep -Eq '^rustc 1\.96\.'
+
+      - name: Build Rust package
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +u
+          source ${{ matrix.ros_setup_script }}
+          set -u
+          cargo build --release --locked --no-default-features --features ros2
+
+      - name: Build with colcon
+        shell: bash
+        run: |
+          set -euo pipefail
+          workspace="${RUNNER_TEMP}/ros2_ws"
+          mkdir -p "${workspace}/src"
+          ln -s "${GITHUB_WORKSPACE}" "${workspace}/src/reduct_bridge"
+          set +u
+          source ${{ matrix.ros_setup_script }}
+          set -u
+          cd "${workspace}"
+          rosdep install --from-paths src --ignore-src -r -y
+          # Exercise the ROS build-farm path, where only the distribution's
+          # system Cargo is initially available.
+          env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            colcon build --packages-select reduct_bridge
+          set +u
+          source install/setup.bash
+          set -u
+          test "$(ros2 pkg prefix reduct_bridge)" = "${workspace}/install/reduct_bridge"
+          ros2 run reduct_bridge reduct-bridge --help
+
+      - name: Run ROS 2 input smoke test
+        uses: ./.github/actions/ros2-input-smoke
+        with:
+          bridge_binary: ${{ runner.temp }}/ros2_ws/install/reduct_bridge/lib/reduct_bridge/reduct-bridge
+          ros-setup-script: ${{ runner.temp }}/ros2_ws/install/setup.bash

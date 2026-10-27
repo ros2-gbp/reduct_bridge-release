@@ -1,0 +1,116 @@
+name: 'Generate Code Coverage'
+description: 'Downloads and runs test binaries with coverage instrumentation for a given target.'
+inputs:
+  os:
+    description: 'Operating system.'
+    required: true
+  target:
+    description: 'Target triple.'
+    required: true
+  action_github_token:
+    description: 'GitHub token for authentication.'
+    required: true
+  cargo-args:
+    description: 'Additional cargo arguments such as feature flags.'
+    required: false
+    default: ''
+  ros-setup-script:
+    description: 'Optional ROS setup script to source before cargo commands.'
+    required: false
+    default: ''
+  access-key-id:
+    description: 'AWS Access Key ID'
+    required: true
+  secret-access-key:
+    description: 'AWS Secret Access Key'
+    required: true
+runs:
+  using: 'composite'
+  steps:
+    - uses: actions/checkout@v4
+
+    - name: Resolve Rust toolchain
+      shell: bash
+      run: |
+        set -euo pipefail
+        toolchain="$(sed -nE 's/^channel = "([^"]+)"$/\1/p' rust-toolchain.toml | head -n 1)"
+        if [[ -z "${toolchain}" ]]; then
+          echo "Failed to resolve Rust toolchain from rust-toolchain.toml" >&2
+          exit 1
+        fi
+        echo "RUST_TOOLCHAIN=${toolchain}" >> "$GITHUB_ENV"
+        echo "RUSTUP_TOOLCHAIN=${toolchain}" >> "$GITHUB_ENV"
+
+    - name: Install Rust
+      shell: bash
+      run: |
+        set -euo pipefail
+        rustup toolchain install "${RUST_TOOLCHAIN}" --profile minimal --component rustfmt --component llvm-tools-preview
+
+    - name: Install cargo-llvm-cov
+      shell: bash
+      run: cargo install cargo-llvm-cov --version 0.8.7 --locked --force
+
+    - name: AWS Credentials and Cargo Cache
+      uses: ./.github/actions/aws-cargo-cache
+      with:
+        os: ${{ inputs.os }}
+        target: ${{ inputs.target }}
+        profile: coverage
+        variant: coverage
+        access-key-id: ${{ inputs.access-key-id }}
+        secret-access-key: ${{ inputs.secret-access-key }}
+
+    - name: Run ReductStore integration test (CI feature)
+      shell: bash
+      env:
+        REDUCTSTORE_URL: http://127.0.0.1:8383
+        CARGO_TERM_COLOR: always
+        RUST_LOG: debug
+      run: |
+        set -e -x
+        if [[ -n "${{ inputs.ros-setup-script }}" ]]; then
+          set +u
+          source "${{ inputs.ros-setup-script }}"
+          set -u
+        fi
+        cargo test --locked ${{ inputs.cargo-args }} ci_reductstore_roundtrip_data_and_attachment -- --nocapture
+
+    - name: Show sccache stats after integration test
+      shell: bash
+      run: |
+        if command -v sccache >/dev/null 2>&1; then
+          sccache --show-stats
+        else
+          echo "sccache is disabled for this build."
+        fi
+
+    - name: Run code coverage
+      shell: bash
+      env:
+        REDUCTSTORE_URL: http://127.0.0.1:8383
+        CARGO_TERM_COLOR: always
+        RUST_LOG: debug
+      run: |
+        set -e -x
+        if [[ -n "${{ inputs.ros-setup-script }}" ]]; then
+          set +u
+          source "${{ inputs.ros-setup-script }}"
+          set -u
+        fi
+        cargo llvm-cov --locked --workspace ${{ inputs.cargo-args }} --lcov --output-path lcov.info
+
+    - name: Show sccache stats after coverage
+      shell: bash
+      run: |
+        if command -v sccache >/dev/null 2>&1; then
+          sccache --show-stats
+        else
+          echo "sccache is disabled for this build."
+        fi
+
+    - name: Upload coverage artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: lcov.info
+        path: lcov.info

@@ -1,0 +1,137 @@
+# ReductStore remote destination.
+[remotes.reduct.local]
+# Unique remote name referenced by pipelines.<name>.remote.
+
+# ReductStore base URL.
+url = "http://localhost:8383"
+# API token used for authentication.
+token_api = "***"
+# Target bucket for all records from this remote.
+bucket = "my-bucket"
+# Required key prefix inside the bucket.
+prefix = "ros_data/"
+# Optional: flush when record count exceeds this value (default: 80, must be > 0).
+batch_max_records = 80
+# Optional: flush when buffered payload size exceeds this value in bytes
+# (default: 8388608, must be > 0).
+batch_max_size_bytes = 8388608
+# Optional: periodic flush interval in milliseconds (default: 1000, must be > 0).
+batch_max_interval_ms = 1000
+# Optional: create the bucket on startup if it does not exist.
+# Omit this table to require the bucket to exist before starting reduct-bridge.
+# [remotes.reduct.local.create_bucket]
+# quota_type = "FIFO" # optional, defaults to NONE; valid: NONE, FIFO, HARD
+# quota_size = "1GB" # required only for FIFO/HARD; also accepts raw bytes, MB/GB/TB, or MiB/GiB/TiB
+
+
+# ROS1 input configuration.
+# Structure: [inputs.ros.<input_name>]
+[inputs.ros.ros_local]
+# ROS master URI (required).
+uri = "http://localhost:11311"
+# ROS node name for reduct-bridge (required).
+node_name = "reduct-bridge"
+# Subscriber queue size (optional, default: 128, must be > 0).
+queue_size = 128
+
+# List of subscribed topics for this input.
+[[inputs.ros.ros_local.topics]]
+# Topic name (required). Supports wildcard '*', e.g. "/camera/*".
+name = "/chatter"
+# Entry name in ReductStore where messages are written (optional).
+# If omitted, the topic name is used as entry_name.
+entry_name = "time"
+# Optional label rules:
+# - { field = "...", label = "..." } extracts dynamic value from decoded ROS message.
+# - { static = { k = "v" } } adds constant labels.
+labels = [
+    { field = "data", label = "message" },
+    { static = { source = "ros1" } }
+]
+# Optional timestamp mapping. For standard ROS headers, use header.stamp with ros_stamp.
+timestamp = { field = "header.stamp", format = "ros_stamp" }
+
+
+# ROS2 input configuration.
+# Structure: [inputs.ros2.<input_name>]
+[inputs.ros2.ros2_local]
+# ROS domain ID (optional).
+domain_id = 0
+# ROS node name for reduct-bridge (required).
+node_name = "reduct_bridge_ros2"
+# Subscriber queue size (optional, default: 128, must be > 0).
+queue_size = 128
+# Optional list of ROS installation / workspace prefixes where message schemas are stored.
+# The bridge resolves schemas from:
+#   <prefix>/share/<package>/msg/<Type>.msg
+# If omitted, it falls back to:
+#   AMENT_PREFIX_PATH, COLCON_PREFIX_PATH, CMAKE_PREFIX_PATH
+schema_paths = ["/opt/ros/jazzy"]
+
+[[inputs.ros2.ros2_local.topics]]
+name = "/chatter"
+entry_name = "ros2_time"
+labels = [
+    { field = "data", label = "message" },
+    { static = { source = "ros2" } }
+]
+# Optional timestamp mapping. For standard ROS headers, use header.stamp with ros_stamp.
+timestamp = { field = "header.stamp", format = "ros_stamp" }
+
+# Optional subscription QoS (per topic). Omitted fields keep the ROS default:
+# reliable, volatile, and the input's queue_size as depth.
+# A latched publisher (/tf_static, a map, a URDF) sends its message once, often
+# before the bridge starts, so a volatile subscription never sees it. Match it
+# with transient_local.
+[[inputs.ros2.ros2_local.topics]]
+name = "/tf_static"
+entry_name = "tf_static"
+qos = { durability = "transient_local", depth = 16 }
+
+# Sensor-data publishers are usually best_effort, and a reliable subscription
+# does not match them, so it receives nothing.
+[[inputs.ros2.ros2_local.topics]]
+name = "/scan"
+entry_name = "scan"
+qos = { reliability = "best_effort" }
+
+
+# Shell inputs
+[inputs.shell.shell_timestamp]
+# Repeat command execution every N seconds.
+repeat_interval = 10
+# Command output becomes record content.
+command = "echo \"Time: $(date --rfc-3339=ns)\""
+# ReductStore entry name for this input output.
+entry_name = "time"
+# Record content type.
+content_type = "text/plain"
+# Optional shell label rules (input-specific format).
+labels = [
+    { regex = "Time: (.*)", labels = ["timestamp"] },
+    { static = { source = "shell_command" } }
+]
+
+[inputs.shell.shell_echo]
+repeat_interval = 15
+command = "echo \"Hello from shell pipeline!\""
+entry_name = "echo"
+content_type = "text/plain"
+
+
+# Pipelines
+[pipelines.telemetry]
+# Which remote section to use.
+remote = "local"
+# Inputs included in this pipeline.
+inputs = ["ros_local", "ros2_local"]
+
+
+[pipelines.shell_pipeline]
+remote = "local"
+inputs = ["shell_timestamp", "shell_echo"]
+# Optional pipeline-level label routing rules.
+labels = [
+    { static = { source = "shell_pipeline" }, to = "*" },
+    { from = "time", labels = ["timestamp"], to = "echo" }
+]

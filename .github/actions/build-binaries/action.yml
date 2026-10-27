@@ -1,0 +1,200 @@
+name: 'Build Binaries'
+description: 'Builds binaries for a specific target and uploads them as artifacts.'
+inputs:
+  action_github_token:
+    description: 'GitHub token for setup-protoc.'
+    required: true
+  target:
+    description: 'Target triple.'
+    required: true
+  os:
+    description: 'Operating system.'
+    required: true
+  compiler:
+    description: 'Compiler package name.'
+    required: true
+  access-key-id:
+    description: 'AWS Access Key ID'
+    required: true
+  secret-access-key:
+    description: 'AWS Secret Access Key'
+    required: true
+  artifact-prefix:
+    description: 'Artifact prefix, for example bridge-ros1 or bridge-ros2-jazzy.'
+    required: true
+  cargo-args:
+    description: 'Additional cargo arguments such as feature flags.'
+    required: false
+    default: ''
+  ros-setup-script:
+    description: 'Optional ROS setup script to source before cargo commands.'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Resolve Rust toolchain
+      shell: bash
+      run: |
+        set -euo pipefail
+        toolchain="$(sed -nE 's/^channel = "([^"]+)"$/\1/p' rust-toolchain.toml | head -n 1)"
+        if [[ -z "${toolchain}" ]]; then
+          echo "Failed to resolve Rust toolchain from rust-toolchain.toml" >&2
+          exit 1
+        fi
+        echo "RUST_TOOLCHAIN=${toolchain}" >> "$GITHUB_ENV"
+        echo "RUSTUP_TOOLCHAIN=${toolchain}" >> "$GITHUB_ENV"
+
+    - name: Install Rust
+      shell: bash
+      run: |
+        set -euo pipefail
+        rustup toolchain install "${RUST_TOOLCHAIN}" --profile minimal --component rustfmt --component llvm-tools-preview
+
+    - name: Install toolchain
+      shell: bash
+      run: rustup target add --toolchain "${RUST_TOOLCHAIN}" ${{ inputs.target }}
+
+    - name: Install gcc
+      if: ${{ startsWith(inputs.os, 'ubuntu-') }}
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ${{ inputs.compiler }}
+
+    - name: Install gcc
+      if: ${{ startsWith(inputs.os, 'macos-') && inputs.compiler != '' }}
+      shell: bash
+      run: |
+        brew install ${{ inputs.compiler }}
+
+    - name: AWS Credentials and Cargo Cache
+      uses: ./.github/actions/aws-cargo-cache
+      with:
+        os: ${{ inputs.os }}
+        target: ${{ inputs.target }}
+        profile: ${{ github.event_name == 'pull_request' && 'ci' || 'release' }}
+        variant: ${{ inputs.artifact-prefix }}
+        access-key-id: ${{ inputs.access-key-id }}
+        secret-access-key: ${{ inputs.secret-access-key }}
+
+    - name: Install cargo-export
+      shell: bash
+      run: |
+        if ! command -v cargo-export >/dev/null 2>&1; then
+          cargo install cargo-export --version 0.3.0 --locked
+        fi
+
+    - name: Build binary (PR)
+      if: github.event_name == 'pull_request'
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ -n "${{ inputs.ros-setup-script }}" ]]; then
+          set +u
+          source "${{ inputs.ros-setup-script }}"
+          set -u
+        fi
+        cargo build --locked --profile ci -p reduct-bridge --target ${{ inputs.target }} ${{ inputs.cargo-args }}
+
+    - name: Show sccache stats (PR)
+      if: github.event_name == 'pull_request'
+      shell: bash
+      run: |
+        if command -v sccache >/dev/null 2>&1; then
+          sccache --show-stats
+        else
+          echo "sccache is disabled for this build."
+        fi
+
+    - name: Upload binary (PR)
+      uses: actions/upload-artifact@v4
+      if: github.event_name == 'pull_request'
+      with:
+        name: ${{ inputs.artifact-prefix }}-${{ inputs.target }}
+        path: target/${{inputs.target}}/ci/reduct-bridge
+        if-no-files-found: 'error'
+
+    - name: Build binary (Release)
+      if: github.event_name != 'pull_request'
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ -n "${{ inputs.ros-setup-script }}" ]]; then
+          set +u
+          source "${{ inputs.ros-setup-script }}"
+          set -u
+        fi
+        cargo build --locked --profile release -p reduct-bridge --target ${{ inputs.target }} ${{ inputs.cargo-args }}
+
+    - name: Show sccache stats (Release)
+      if: github.event_name != 'pull_request'
+      shell: bash
+      run: |
+        if command -v sccache >/dev/null 2>&1; then
+          sccache --show-stats
+        else
+          echo "sccache is disabled for this build."
+        fi
+
+
+    - name: Upload binary (Release)
+      uses: actions/upload-artifact@v4
+      if: github.event_name != 'pull_request'
+      with:
+        name: ${{ inputs.artifact-prefix }}-${{ inputs.target }}
+        path: target/${{inputs.target}}/release/reduct-bridge${{ inputs.target == 'x86_64-pc-windows-gnu' && '.exe' || '' }}
+        if-no-files-found: 'error'
+
+
+    - name: Build and export tests (PR)
+      if: github.event_name == 'pull_request' && inputs.target == 'x86_64-unknown-linux-gnu'
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ -n "${{ inputs.ros-setup-script }}" ]]; then
+          set +u
+          source "${{ inputs.ros-setup-script }}"
+          set -u
+        fi
+        cargo export target/${{ inputs.target }}/tests -- test --locked --profile ci --target ${{ inputs.target }} --bins ${{ inputs.cargo-args }} --features ci
+
+    - name: Show sccache stats after test export (PR)
+      if: github.event_name == 'pull_request' && inputs.target == 'x86_64-unknown-linux-gnu'
+      shell: bash
+      run: |
+        if command -v sccache >/dev/null 2>&1; then
+          sccache --show-stats
+        else
+          echo "sccache is disabled for this build."
+        fi
+
+    - name: Build and export tests (Release)
+      if: github.event_name != 'pull_request' && inputs.target == 'x86_64-unknown-linux-gnu'
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ -n "${{ inputs.ros-setup-script }}" ]]; then
+          set +u
+          source "${{ inputs.ros-setup-script }}"
+          set -u
+        fi
+        cargo export target/${{ inputs.target }}/tests -- test --locked --profile release --target ${{ inputs.target }} --bins ${{ inputs.cargo-args }}
+
+    - name: Show sccache stats after test export (Release)
+      if: github.event_name != 'pull_request' && inputs.target == 'x86_64-unknown-linux-gnu'
+      shell: bash
+      run: |
+        if command -v sccache >/dev/null 2>&1; then
+          sccache --show-stats
+        else
+          echo "sccache is disabled for this build."
+        fi
+
+    - name: Upload tests
+      uses: actions/upload-artifact@v4
+      if: inputs.target == 'x86_64-unknown-linux-gnu'
+      with:
+        name: ${{ inputs.artifact-prefix }}-tests-${{ inputs.target }}
+        path: target/${{ inputs.target }}/tests

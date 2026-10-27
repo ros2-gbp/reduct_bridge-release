@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+import os
+import re
+from pathlib import Path
+
+
+def resolve_snap_version() -> str:
+    cargo_toml = Path("Cargo.toml").read_text(encoding="utf-8")
+    package_block = re.search(r"(?ms)^\[package\]\n(.*?)(?:^\[|\Z)", cargo_toml)
+    if not package_block:
+        raise RuntimeError("Could not find [package] section in Cargo.toml")
+    version_match = re.search(
+        r'^version\s*=\s*"([^"]+)"\s*$', package_block.group(1), re.M
+    )
+    if not version_match:
+        raise RuntimeError("Could not find package.version in Cargo.toml")
+
+    crate_version = version_match.group(1).strip()
+    sha = os.getenv("GITHUB_SHA", "local")[:7]
+    version = f"{crate_version}-git{sha}"
+    return re.sub(r"[^A-Za-z0-9.+:~-]", "-", version) or "0"
+
+
+def resolve_description() -> str:
+    readme = Path("README.md").read_text(encoding="utf-8")
+    description = readme.replace("\r\n", "\n").replace("\r", "\n").strip()
+    max_description_length = 4096
+    if len(description) > max_description_length:
+        description = description[: max_description_length - 3].rstrip() + "..."
+    return description
+
+
+def main() -> None:
+    snap_name = os.environ["SNAP_NAME"]
+    snap_title = os.environ["SNAP_TITLE"]
+    snap_variant = os.environ.get("SNAP_VARIANT", "ros1")
+    snap_ros_distro = os.environ.get("SNAP_ROS_DISTRO", "jazzy").strip().lower()
+    snap_base = "core22"
+    snap_version = resolve_snap_version()
+    description = resolve_description()
+    indented_description = description.replace("\n", "\n  ")
+    ros_runtime_part = ""
+    if snap_variant == "ros2":
+        # ROS2 Jazzy runtime is built on Ubuntu 24.04 and requires core24 ABI.
+        snap_base = "core24"
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", snap_ros_distro):
+            raise RuntimeError(
+                f"Unsupported SNAP_ROS_DISTRO value: {snap_ros_distro!r}"
+            )
+        ros_runtime_part = """
+  ros2-runtime:
+    plugin: nil
+    stage-snaps:
+      - ros-__ROS_DISTRO__-ros-base
+"""
+        ros_runtime_part = ros_runtime_part.replace("__ROS_DISTRO__", snap_ros_distro)
+
+    template = Path(".github/actions/snap-release/snapcraft.template.yaml").read_text()
+    text = template.replace("__SNAP_TITLE__", snap_title)
+    text = text.replace("__SNAP_NAME__", snap_name)
+    text = text.replace("__SNAP_BASE__", snap_base)
+    text = text.replace("__SNAP_VERSION__", snap_version)
+    text = text.replace("__SNAP_DESCRIPTION__", indented_description)
+    text = text.replace("__ROS_RUNTIME_PART__", ros_runtime_part)
+    Path("snap/snapcraft.yaml").write_text(text)
+
+
+if __name__ == "__main__":
+    main()

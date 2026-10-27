@@ -1,0 +1,123 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## 0.5.4 - 2026-10-27
+
+- Fix ros package version
+
+## 0.5.3 - 2026-10-27
+
+### Fixed
+
+- ROS Bloom upstream imports no longer fail on repository-local `.kilo` tooling files, [PR-69](https://github.com/reductstore/reduct-bridge/pull/69).
+
+## 0.5.2 - 2026-10-21
+
+### Added
+
+- Regression coverage for the main CLI startup, help, version, invalid configuration, and shutdown paths, [PR-67](https://github.com/reductstore/reduct-bridge/pull/67).
+
+### Fixed
+
+- Source archives exclude the repository-only `.kilo` tooling directory so ROS Bloom imports are not blocked by ignore rules, [PR-68](https://github.com/reductstore/reduct-bridge/pull/68).
+
+## 0.5.1 - 2026-10-10
+
+### Fixed
+
+- ROS package builds now use the pinned Rust toolchain instead of the distribution's outdated system Cargo, [PR-66](https://github.com/reductstore/reduct-bridge/pull/66).
+
+## 0.5.0 - 2026-10-07
+
+### Added
+
+- Optional per-topic `qos = { reliability, durability, depth }` for the ROS2 input, so latched (`transient_local`) and `best_effort` publishers can be recorded, [PR-63](https://github.com/reductstore/reduct-bridge/pull/63).
+- ROS 2 package metadata and CI coverage for building ReductBridge as a ROS package, [PR-62](https://github.com/reductstore/reduct-bridge/pull/62).
+- Snap packages now expose an optional `reduct-bridge-configuration` content plug for provider snaps that supply read-only TOML configuration files, [PR-60](https://github.com/reductstore/reduct-bridge/pull/60).
+
+### Fixed
+
+- The ROS2 input no longer fails when a configured topic is not advertised within 10 seconds. Advertised topics are subscribed immediately, the rest are retried once a second and subscribed as they appear, and a topic that fails to subscribe is skipped instead of stopping the others, [PR-63](https://github.com/reductstore/reduct-bridge/pull/63).
+
+## 0.4.1 - 2026-07-14
+
+### Fixed
+
+- Relax nounset while sourcing ROS setup in the entrypoint, [PR-54](https://github.com/reductstore/reduct-bridge/pull/54).
+
+## 0.4.0 - 2026-06-25
+
+### Changed
+
+- Hardened the build supply chain by pinning Rust 1.96.0 in-repo, enforcing locked Cargo installs in CI/coverage, digest-pinning CI Docker base images, and verifying the ROS apt key fingerprint during image builds.
+- ROS1/ROS2 schema metadata is now stored under the `$schema` attachment key by default, falling back to the legacy `$ros` key for entries that already carry one, [PR-51](https://github.com/reductstore/reduct-bridge/pull/51).
+
+## 0.3.1 - 2026-06-04
+
+### Fixed
+
+- Fixed periodic attachment resend skipping cached attachments when the entry is missing, [PR-49](https://github.com/reductstore/reduct-bridge/pull/49).
+- ROS2 topic timestamp mapping from decoded message fields, including config validation, [PR-47](https://github.com/reductstore/reduct-bridge/pull/47).
+
+## 0.3.0 - 2026-06-02
+
+### Added
+
+- HTTP input for polling HTTP/HTTPS endpoints on a fixed interval with GET requests, optional bearer/basic auth, header/static/JSON field label mapping, and HTTP-specific tests and documentation, [PR-33](https://github.com/reductstore/reduct-bridge/pull/33).
+- Optional ReductStore bucket creation via `[remotes.reduct.create_bucket]`, with configurable `quota_type`, numeric or human-readable `quota_size` values such as `"1GB"` and `"4GiB"`, updated examples/docs, and parsing coverage for valid and invalid unit strings, [PR-34](https://github.com/reductstore/reduct-bridge/pull/34).
+- Reduct remote attachment reconciliation with `attachments_resend_interval_ms` (default `300000`, `0` disables) to periodically restore missing attachments, including config/docs coverage and CI tests for enabled/disabled behavior, [PR-45](https://github.com/reductstore/reduct-bridge/pull/45).
+- Timestamp mapping from source data fields, headers, and MQTT v5 user properties for HTTP, MQTT, and ROS1 inputs, with shared parsing for Unix, ISO8601, and ROS stamp formats, [PR-46](https://github.com/reductstore/reduct-bridge/pull/46).
+- Protobuf support for MQTT input with schema-based decoding, wire-format field extraction, dynamic labeling, and descriptor attachments, [PR-31](https://github.com/reductstore/reduct-bridge/pull/31)
+
+### Changed
+
+- Bundle-style `ros1`, `ros2`, and `iot` build features with CI and installation documentation updates, [PR-37](https://github.com/reductstore/reduct-bridge/pull/37).
+- Improved Reduct `create_bucket` quota UX by defaulting `quota_type` to `NONE`, requiring `quota_size` only for `FIFO`/`HARD`, and aligning launch/config validation and docs with this behavior, [PR-43](https://github.com/reductstore/reduct-bridge/pull/43).
+- Preferred keyed TOML syntax for Reduct remotes (`[remotes.reduct.<name>]`) while keeping `[[remotes.reduct]]` backward compatible, now with deprecation warnings when the legacy array syntax is used, including updated docs/examples and parser coverage, [PR-42](https://github.com/reductstore/reduct-bridge/pull/42).
+
+## 0.2.1 - 2026-05-19
+
+### Fixed
+
+- Docker image pipeline now builds per variant with Ubuntu base selection, non-root runtime, ROS2 runtime provisioning for ROS variants, corrected DockerHub tagging, and SBOM/provenance attestations, [PR-36](https://github.com/reductstore/reduct-bridge/pull/36)
+
+## 0.2.0 - 2026-05-11
+
+### Added
+
+- Metrics input for CPU, memory, and disk with JSON output and label mapping, [PR-19](https://github.com/reductstore/reduct-bridge/pull/19)
+- MQTT input for MQTT v3/v5 with payload/topic labels and optional JSON-schema attachments, [PR-24](https://github.com/reductstore/reduct-bridge/pull/24)
+
+### Fixed
+
+- Deterministic bridge shutdown by tracking component tasks, [PR-22](https://github.com/reductstore/reduct-bridge/pull/22)
+- Pinned third-party GitHub Actions to immutable commit SHAs in CI workflow hardening, [PR-32](https://github.com/reductstore/reduct-bridge/pull/32)
+
+## 0.1.2 - 2026-03-30
+
+### Added
+
+- Official Snap packaging, ROS1/ROS2 variant build matrix, CI publish workflow, and README installation docs, [PR-12](https://github.com/reductstore/reduct-bridge/pull/12)
+
+### Fixed
+
+- Patched ROS1 `rosrust`/`xml-rpc` dependencies to address security issues, [PR-17](https://github.com/reductstore/reduct-bridge/pull/17)
+
+## 0.1.1 - 2026-03-19
+
+### Fixed
+
+- ROS2 wildcard discovery, exact-topic label extraction, recursive schema attachments, and ReductStore timestamp/path handling, [PR-6](https://github.com/reductstore/reduct-bridge/pull/6)
+
+## 0.1.0 - 2026-03-18
+
+### Added
+
+- ROS2 input with dynamic label mapping, schema attachments, feature-gated builds, and CI coverage, [PR-5](https://github.com/reductstore/reduct-bridge/pull/5)
+- Initial implementation with ROS1 and shell inputs, [PR-3](https://github.com/reductstore/reduct-bridge/pull/3)
