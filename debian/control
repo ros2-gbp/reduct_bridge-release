@@ -1,0 +1,12 @@
+Source: ros-lyrical-reduct-bridge
+Section: misc
+Priority: optional
+Maintainer: "ReductSoftware UG" <info@reduct.store>
+Build-Depends: debhelper (>= 9.0.0), cargo, cmake, ros-lyrical-ament-cmake, ros-lyrical-builtin-interfaces, ros-lyrical-example-interfaces, ros-lyrical-rcl, ros-lyrical-rcl-action, ros-lyrical-rcl-interfaces, ros-lyrical-rcl-yaml-param-parser, ros-lyrical-rcutils, ros-lyrical-rmw, ros-lyrical-rmw-implementation, ros-lyrical-ros-environment, ros-lyrical-rosgraph-msgs, ros-lyrical-rosidl-runtime-c, ros-lyrical-test-msgs, ros-lyrical-unique-identifier-msgs, rustc, ros-lyrical-ros-workspace
+Homepage: https://index.ros.org/p/reduct_bridge/#lyrical
+Standards-Version: 3.9.2
+
+Package: ros-lyrical-reduct-bridge
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-lyrical-builtin-interfaces, ros-lyrical-example-interfaces, ros-lyrical-rcl, ros-lyrical-rcl-action, ros-lyrical-rcl-interfaces, ros-lyrical-rcl-yaml-param-parser, ros-lyrical-rcutils, ros-lyrical-rmw, ros-lyrical-rmw-implementation, ros-lyrical-ros-environment, ros-lyrical-rosgraph-msgs, ros-lyrical-rosidl-runtime-c, ros-lyrical-test-msgs, ros-lyrical-unique-identifier-msgs, ros-lyrical-ros-workspace
+Description: Streams ROS 2 data into ReductStore.
