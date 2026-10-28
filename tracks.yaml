@@ -81,8 +81,8 @@ tracks:
     patches: null
     release_inc: '1'
     release_repo_url: null
-    release_tag: v0.5.5
+    release_tag: v0.5.6
     ros_distro: lyrical
     vcs_type: git
     vcs_uri: https://github.com/reductstore/reduct-bridge.git
-    version: 0.5.5
+    version: 0.5.6
