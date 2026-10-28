@@ -23,11 +23,11 @@ tracks:
     patches: null
     release_inc: '1'
     release_repo_url: null
-    release_tag: v0.5.4
+    release_tag: v0.5.5
     ros_distro: humble
     vcs_type: git
     vcs_uri: https://github.com/reductstore/reduct-bridge.git
-    version: 0.5.4
+    version: 0.5.5
   jazzy:
     actions:
     - bloom-export-upstream :{vcs_local_uri} :{vcs_type} --tag :{release_tag} --display-uri
