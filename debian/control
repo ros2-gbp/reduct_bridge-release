@@ -1,0 +1,12 @@
+Source: ros-jazzy-reduct-bridge
+Section: misc
+Priority: optional
+Maintainer: "ReductSoftware UG" <info@reduct.store>
+Build-Depends: debhelper (>= 9.0.0), cargo, cmake, ros-jazzy-ament-cmake, ros-jazzy-builtin-interfaces, ros-jazzy-example-interfaces, ros-jazzy-rcl, ros-jazzy-rcl-action, ros-jazzy-rcl-interfaces, ros-jazzy-rcl-yaml-param-parser, ros-jazzy-rcutils, ros-jazzy-rmw, ros-jazzy-rmw-implementation, ros-jazzy-ros-environment, ros-jazzy-rosgraph-msgs, ros-jazzy-rosidl-runtime-c, ros-jazzy-test-msgs, ros-jazzy-unique-identifier-msgs, rustc, ros-jazzy-ros-workspace
+Homepage: https://index.ros.org/p/reduct_bridge/#jazzy
+Standards-Version: 3.9.2
+
+Package: ros-jazzy-reduct-bridge
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-jazzy-builtin-interfaces, ros-jazzy-example-interfaces, ros-jazzy-rcl, ros-jazzy-rcl-action, ros-jazzy-rcl-interfaces, ros-jazzy-rcl-yaml-param-parser, ros-jazzy-rcutils, ros-jazzy-rmw, ros-jazzy-rmw-implementation, ros-jazzy-ros-environment, ros-jazzy-rosgraph-msgs, ros-jazzy-rosidl-runtime-c, ros-jazzy-test-msgs, ros-jazzy-unique-identifier-msgs, ros-jazzy-ros-workspace
+Description: Streams ROS 2 data into ReductStore.
