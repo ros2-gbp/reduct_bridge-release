@@ -1,3 +1,26 @@
+## reduct_bridge (humble) - 0.5.6-1
+
+The packages in the `reduct_bridge` repository were released into the `humble` distro by running `/usr/bin/bloom-release --new-track --rosdistro humble --track humble --override-release-repository-url https://github.com/ros2-gbp/reduct_bridge-release.git reduct_bridge` on `Sat, 31 Oct 2026 20:57:53 -0000`
+
+The `reduct_bridge` package was released.
+
+Version of package(s) in repository `reduct_bridge`:
+
+- upstream repository: https://github.com/reductstore/reduct-bridge.git
+- release repository: https://github.com/ros2-gbp/reduct_bridge-release.git
+- rosdistro version: `0.5.5-1`
+- old version: `0.5.5-1`
+- new version: `0.5.6-1`
+
+Versions of tools used:
+
+- bloom version: `0.14.4`
+- catkin_pkg version: `1.1.1`
+- rosdep version: `0.27.0`
+- rosdistro version: `1.1.0`
+- vcstools version: `0.1.42`
+
+
 ## reduct_bridge (jazzy) - 0.5.6-1
 
 The packages in the `reduct_bridge` repository were released into the `jazzy` distro by running `/usr/bin/bloom-release --new-track --rosdistro jazzy --track jazzy --override-release-repository-url https://github.com/ros2-gbp/reduct_bridge-release.git reduct_bridge` on `Fri, 30 Oct 2026 08:19:12 -0000`
